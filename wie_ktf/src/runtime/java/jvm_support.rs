@@ -16,15 +16,23 @@ use jvm_implementation::KtfJvmImplementation;
 
 use bytemuck::{Pod, Zeroable};
 
-use java_runtime::classes::java::util::{Enumeration, jar::JarEntry};
-use jvm::{ClassDefinition, ClassInstance, ClassInstanceRef, Jvm, runtime::JavaLangString};
+use java_class_proto::JavaMethodProto;
+use java_constants::MethodAccessFlags;
+use java_runtime::classes::java::{
+    lang::String,
+    util::{Enumeration, jar::JarEntry},
+};
+use jvm::{Array, ClassDefinition, ClassInstance, ClassInstanceRef, Jvm, Result as JvmResult, runtime::JavaLangString};
 
 use wie_backend::System;
 use wie_core_arm::{Allocator, ArmCore};
 use wie_jvm_support::JvmSupport;
 use wie_util::{Result, WieError, read_generic, read_null_terminated_table, write_generic};
 
-use wipi_types::ktf::InitParam2;
+use wipi_types::ktf::{
+    InitParam2,
+    java::{JavaClass as RawJavaClass, JavaClassDescriptor as RawJavaClassDescriptor},
+};
 
 use self::{
     array_class_instance::JavaArrayClassInstance,
@@ -60,6 +68,65 @@ const SUPPORT_CONTEXT_BASE: u32 = 0x7fff0000;
 
 pub struct KtfJvmSupport;
 
+async fn value_of_partial_char_array(
+    jvm: &Jvm,
+    _: &mut (),
+    value: ClassInstanceRef<Array<u16>>,
+    offset: i32,
+    count: i32,
+) -> JvmResult<ClassInstanceRef<String>> {
+    let result = jvm.new_class("java/lang/String", "([CII)V", (value, offset, count)).await?;
+
+    Ok(result.into())
+}
+
+async fn add_string_value_of_char_array_slice_if_missing(core: &mut ArmCore, jvm: &Jvm) -> Result<()> {
+    let class = jvm.resolve_class("java/lang/String").await.unwrap().definition;
+    let class = class.as_any().downcast_ref::<JavaClassDefinition>().unwrap().clone();
+
+    if class.method("valueOf", "([CII)Ljava/lang/String;", true)?.is_some() {
+        return Ok(());
+    }
+
+    let method = JavaMethod::new(
+        core,
+        jvm,
+        class.ptr_raw,
+        JavaMethodProto::new(
+            "valueOf",
+            "([CII)Ljava/lang/String;",
+            value_of_partial_char_array,
+            MethodAccessFlags::STATIC,
+        ),
+        Box::new(()),
+    )?;
+
+    let raw_class: RawJavaClass = read_generic(core, class.ptr_raw)?;
+    let mut descriptor: RawJavaClassDescriptor = read_generic(core, raw_class.ptr_descriptor)?;
+
+    let mut methods = read_null_terminated_table(core, descriptor.ptr_methods)?;
+    methods.push(method.ptr_raw);
+
+    let ptr_methods = Allocator::alloc(core, ((methods.len() + 1) * size_of::<u32>()) as u32)?;
+    methods.push(0);
+
+    for (index, method_ptr) in methods.iter().enumerate() {
+        write_generic(core, ptr_methods + (index * size_of::<u32>()) as u32, *method_ptr)?;
+    }
+
+    descriptor.ptr_methods = ptr_methods;
+    descriptor.method_count += 1;
+
+    write_generic(core, raw_class.ptr_descriptor, descriptor)?;
+
+    Ok(())
+}
+fn is_client_bin_entry(name: &str) -> bool {
+    let basename = name.rsplit('/').next().unwrap_or(name);
+
+    basename.to_ascii_lowercase().starts_with("client.bin")
+}
+
 impl KtfJvmSupport {
     pub async fn init(core: &mut ArmCore, system: &mut System, jar_name: Option<&str>) -> Result<(Jvm, Box<dyn ClassInstance>)> {
         let jvm_context = InitParam2 {
@@ -86,6 +153,7 @@ impl KtfJvmSupport {
 
         let protos = [wie_wipi_java::get_protos().into(), wie_midp::get_protos().into()];
         let jvm = JvmSupport::new_jvm(system, jar_name, Box::new(protos), &[], KtfJvmImplementation::new(core.clone())).await?;
+        add_string_value_of_char_array_slice_if_missing(core, &jvm).await?;
 
         let system_class_loader: Box<dyn ClassInstance> = jvm
             .invoke_static("java/lang/ClassLoader", "getSystemClassLoader", "()Ljava/lang/ClassLoader;", [])
@@ -115,7 +183,7 @@ impl KtfJvmSupport {
             let name = jvm.invoke_virtual(&entry, "getName", "()Ljava/lang/String;", []).await.unwrap();
             let name_rust = JavaLangString::to_rust_string(&jvm, &name).await.unwrap();
 
-            if name_rust.starts_with("client.bin") {
+            if is_client_bin_entry(&name_rust) {
                 break name;
             }
         };

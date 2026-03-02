@@ -10,7 +10,7 @@ use std::{
     error::Error,
     fs,
     io::stderr,
-    sync::mpsc::{Receiver, Sender, channel},
+    sync::mpsc::{Receiver, SyncSender, sync_channel},
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -33,14 +33,16 @@ use self::{
 };
 
 struct WieCliPlatform {
-    audio_thread_tx: Sender<(u8, u32, Vec<i16>)>,
+    audio_thread_tx: SyncSender<(u8, u32, Vec<i16>)>,
     database_repository: DatabaseRepository,
     window: WindowHandle,
 }
 
+const AUDIO_QUEUE_SIZE: usize = 8;
+
 impl WieCliPlatform {
     fn new(window: WindowHandle) -> Self {
-        let (tx, rx) = channel();
+        let (tx, rx) = sync_channel(AUDIO_QUEUE_SIZE);
         thread::spawn(|| Self::audio_thread(rx));
 
         Self {
