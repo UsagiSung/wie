@@ -1,14 +1,17 @@
-use std::sync::{Mutex, mpsc::Sender};
+use std::sync::{
+    Mutex,
+    mpsc::{SyncSender, TrySendError},
+};
 
 use midir::MidiOutputConnection;
 
 pub struct AudioSink {
     midi_out: Option<Mutex<MidiOutputConnection>>,
-    audio_tx: Sender<(u8, u32, Vec<i16>)>,
+    audio_tx: SyncSender<(u8, u32, Vec<i16>)>,
 }
 
 impl AudioSink {
-    pub fn new(midi_out: Option<MidiOutputConnection>, audio_tx: Sender<(u8, u32, Vec<i16>)>) -> Self {
+    pub fn new(midi_out: Option<MidiOutputConnection>, audio_tx: SyncSender<(u8, u32, Vec<i16>)>) -> Self {
         Self {
             midi_out: midi_out.map(Mutex::new),
             audio_tx,
@@ -24,7 +27,15 @@ unsafe impl Send for AudioSink {}
 
 impl wie_backend::AudioSink for AudioSink {
     fn play_wave(&self, channel: u8, sampling_rate: u32, wave_data: &[i16]) {
-        self.audio_tx.send((channel, sampling_rate, wave_data.to_vec())).unwrap();
+        match self.audio_tx.try_send((channel, sampling_rate, wave_data.to_vec())) {
+            Ok(_) => {}
+            Err(TrySendError::Full(_)) => {
+                tracing::warn!(target: "wie", "Audio queue is full, dropping one audio buffer");
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                tracing::warn!(target: "wie", "Audio thread is disconnected; dropping audio buffer");
+            }
+        }
     }
 
     fn midi_note_on(&self, channel_id: u8, note: u8, velocity: u8) {
