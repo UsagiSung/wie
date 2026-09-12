@@ -1,7 +1,7 @@
 use alloc::{borrow::Cow, boxed::Box, format, vec, vec::Vec};
 use core::marker::PhantomData;
 
-use bytemuck::cast_vec;
+use bytemuck::{Zeroable, cast_vec};
 
 use jvm::{
     Array, ArrayRawBufferMut, ClassInstanceRef, Jvm, Result as JvmResult,
@@ -290,10 +290,10 @@ where
     fn get_pixel(&self, x: i32, y: i32) -> Color {
         let offset = (((y as u32) * self.width() + (x as u32)) * self.bytes_per_pixel()) as usize;
 
-        let mut buffer = vec![0; self.bytes_per_pixel() as usize];
-        self.raw_buffer.read(offset as _, &mut buffer).unwrap();
+        let mut raw = T::DataType::zeroed();
+        self.raw_buffer.read(offset as _, bytemuck::bytes_of_mut(&mut raw)).unwrap();
 
-        T::to_color(*bytemuck::from_bytes(&buffer[..size_of::<T::DataType>()]))
+        T::to_color(raw)
     }
 
     fn raw(&self) -> Cow<'_, [u8]> {
@@ -337,12 +337,9 @@ where
 
         let offset = (((y as u32) * self.width() + (x as u32)) * self.bytes_per_pixel()) as usize;
 
-        let raw_bytes = colors
-            .iter()
-            .flat_map(|color| bytemuck::bytes_of(&T::from_color(*color)).to_vec())
-            .collect::<Vec<_>>();
+        let raw_pixels: Vec<T::DataType> = colors.iter().copied().map(T::from_color).collect();
 
-        self.raw_buffer.write(offset as _, &raw_bytes).unwrap();
+        self.raw_buffer.write(offset as _, bytemuck::cast_slice(&raw_pixels)).unwrap();
     }
 
     fn xor_pixel(&mut self, x: i32, y: i32, color: Color) {
@@ -352,10 +349,71 @@ where
 
         let offset = (((y as u32) * self.width() + (x as u32)) * self.bytes_per_pixel()) as usize;
 
-        let mut buffer = vec![0; self.bytes_per_pixel() as usize];
-        self.raw_buffer.read(offset as _, &mut buffer).unwrap();
+        let mut raw = T::DataType::zeroed();
+        self.raw_buffer.read(offset as _, bytemuck::bytes_of_mut(&mut raw)).unwrap();
 
-        let raw = T::xor_color(*bytemuck::from_bytes(&buffer[..size_of::<T::DataType>()]), color);
+        let raw = T::xor_color(raw, color);
         self.raw_buffer.write(offset as _, bytemuck::bytes_of(&raw)).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn check_guest_pixels<T: PixelType + 'static>() -> wie_util::Result<()> {
+        test_utils::run_jvm_test(Box::new([crate::get_protos().into()]), |jvm| async move {
+            let mut data = jvm.instantiate_array("B", 4 * size_of::<T::DataType>()).await?;
+            let image = jvm
+                .new_class(
+                    "javax/microedition/lcdui/Image",
+                    "(II[BI)V",
+                    (2, 2, data.clone(), (2 * size_of::<T::DataType>()) as i32),
+                )
+                .await?
+                .into();
+            let mut pixels = JavaImageBuffer::<T>::new(&jvm, &image).await?;
+            let colors = [
+                Color { a: 255, r: 255, g: 0, b: 0 },
+                Color { a: 255, r: 0, g: 255, b: 0 },
+                Color { a: 255, r: 0, g: 0, b: 255 },
+            ];
+            pixels.put_pixels(1, 0, 2, &colors);
+            let expected: Vec<T::DataType> = colors.iter().copied().map(T::from_color).collect();
+            let mut stored = vec![0; 3 * size_of::<T::DataType>()];
+            let mut raw = jvm.array_raw_buffer_mut(&mut data).await?;
+            raw.read(size_of::<T::DataType>(), &mut stored)?;
+            assert_eq!(stored, bytemuck::cast_slice(&expected));
+
+            // An existing image adapter must observe later guest writes.
+            let replacement = T::from_color(colors[2]);
+            raw.write(size_of::<T::DataType>(), bytemuck::bytes_of(&replacement))?;
+            let pixel = pixels.get_pixel(1, 0);
+            assert_eq!((pixel.a, pixel.r, pixel.g, pixel.b), (255, 0, 0, 255));
+            let all = pixels.colors();
+            assert_eq!((all[1].a, all[1].r, all[1].g, all[1].b), (255, 0, 0, 255));
+
+            pixels.xor_pixel(1, 0, colors[0]);
+            pixels.xor_pixel(1, 0, colors[0]);
+            let mut restored = vec![0; size_of::<T::DataType>()];
+            raw.read(size_of::<T::DataType>(), &mut restored)?;
+            assert_eq!(restored, bytemuck::bytes_of(&replacement));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn guest_pixels_rgb332() -> wie_util::Result<()> {
+        check_guest_pixels::<Rgb332Pixel>()
+    }
+
+    #[test]
+    fn guest_pixels_rgb565() -> wie_util::Result<()> {
+        check_guest_pixels::<Rgb565Pixel>()
+    }
+
+    #[test]
+    fn guest_pixels_argb() -> wie_util::Result<()> {
+        check_guest_pixels::<ArgbPixel>()
     }
 }

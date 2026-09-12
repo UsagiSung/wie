@@ -366,7 +366,7 @@ where
             return;
         }
 
-        if !blend {
+        if !blend || color.a == 255 {
             self.image_buffer.put_pixel(x, y, color);
             return;
         }
@@ -1086,6 +1086,62 @@ mod tests {
             pixel.b ^= color.b;
             pixel.a = 255;
         }
+    }
+
+    #[test]
+    fn test_draw_blends_transparent_partial_and_opaque_pixels() {
+        let mut canvas = ImageBufferCanvas::new(VecImageBuffer::<ArgbPixel>::new(3, 1));
+        let background = Color { a: 64, r: 40, g: 80, b: 120 };
+        canvas.fill_rect(0, 0, 3, 1, background, full_clip(3));
+        let mut source = VecImageBuffer::<ArgbPixel>::new(3, 1);
+        for (x, alpha) in [0, 128, 255].into_iter().enumerate() {
+            source.put_pixel(
+                x as i32,
+                0,
+                Color {
+                    a: alpha,
+                    r: 200,
+                    g: 100,
+                    b: 60,
+                },
+            );
+        }
+
+        canvas.draw(0, 0, 3, 1, &source, 0, 0, full_clip(3));
+
+        assert_color(
+            canvas.image(),
+            0,
+            0,
+            Color {
+                a: 255,
+                r: 40,
+                g: 80,
+                b: 120,
+            },
+        );
+        assert_color(
+            canvas.image(),
+            1,
+            0,
+            Color {
+                a: 255,
+                r: 120,
+                g: 90,
+                b: 89,
+            },
+        );
+        assert_color(
+            canvas.image(),
+            2,
+            0,
+            Color {
+                a: 255,
+                r: 200,
+                g: 100,
+                b: 60,
+            },
+        );
     }
 
     #[test]
