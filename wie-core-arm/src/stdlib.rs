@@ -56,3 +56,50 @@ pub async fn strlen(core: &mut ArmCore, _: &mut (), ptr_str: u32) -> Result<u32>
         len = len.wrapping_add(STR_SCAN_CHUNK as u32);
     }
 }
+
+/// Copy guest memory while preserving the source bytes when the ranges overlap.
+pub async fn memmove(core: &mut ArmCore, context: &mut (), ptr_dst: u32, ptr_src: u32, len: u32) -> Result<u32> {
+    if ptr_dst > ptr_src && ptr_dst - ptr_src < len {
+        let mut buf = [0u8; COPY_CHUNK];
+        let mut remaining = len;
+        while remaining > 0 {
+            let chunk = (remaining as usize).min(COPY_CHUNK);
+            remaining -= chunk as u32;
+            core.read_bytes(ptr_src.wrapping_add(remaining), &mut buf[..chunk])?;
+            core.write_bytes(ptr_dst.wrapping_add(remaining), &buf[..chunk])?;
+        }
+    } else if ptr_dst != ptr_src {
+        memcpy(core, context, ptr_dst, ptr_src, len).await?;
+    }
+    Ok(ptr_dst)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec::Vec;
+    use futures::FutureExt;
+
+    #[test]
+    fn memmove_preserves_overlapping_ranges_across_chunks() -> Result<()> {
+        let mut core = ArmCore::new(false, None)?;
+        core.map(0x10000, 0x4000)?;
+        let original: Vec<u8> = (0..0x3000).map(|index| (index % 251) as u8).collect();
+        for (dst, src, len) in [(37usize, 0usize, 9000usize), (0, 37, 9000), (9500, 0, 1500), (0, 0, 9000)] {
+            core.write_bytes(0x10000, &original)?;
+            let mut expected = original.clone();
+            expected.copy_within(src..src + len, dst);
+            assert_eq!(
+                memmove(&mut core, &mut (), 0x10000 + dst as u32, 0x10000 + src as u32, len as u32)
+                    .now_or_never()
+                    .unwrap()?,
+                0x10000 + dst as u32
+            );
+            let mut actual = original.clone();
+            core.read_bytes(0x10000, &mut actual)?;
+            assert_eq!(actual, expected);
+        }
+        assert_eq!(memmove(&mut core, &mut (), 0, 1, 0).now_or_never().unwrap()?, 0);
+        Ok(())
+    }
+}

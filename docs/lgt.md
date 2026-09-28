@@ -306,3 +306,34 @@ Known functions in Java import table `0x64` are:
 - Interface-method calls and interface-specific generated metadata need further analysis.
 - The exact work performed by imports `0x03`, `0x54`, and `0x55` beyond their call positions is unresolved.
 - Bootstrap services in tables `0x1fc`, `0x1ff`, and `0x201` remain only partially understood.
+
+## Clet input mode and storage queries
+
+Native WIPI table `0x1fb` has these additional bootstrap services:
+
+| Import | Contract |
+| ---: | --- |
+| `0x12c` | Input mode count, with no arguments |
+| `0x12d` | Pointer to a `char **` input mode table, with no arguments |
+| `0x12e` | Select an input mode by its zero-based index |
+| `0x12f` | Read the current input mode index |
+| `0x19c` | Available database storage in bytes, with no arguments |
+
+The input mode table is allocated once per emulated process. Its root is at
+`0x7fff1020`, and the selected mode is at `0x7fff1024`. These are guest memory,
+not host globals. The table supplies `EN/L`, `EN/S`, and `NUM`; full Hangul
+composition and `MC_imHandleInput` remain unimplemented.
+
+The LGT 제노니아1 startup was used to diagnose these imports. Its input
+initialization calls `0x12c`, then dereferences the first pointer returned by
+`0x12d` and searches that string for `/L` and `/S`. Returning zero from the old
+unnamed stubs caused the reported null memory access inside `startApp`.
+After that fix, the save initialization called `0x19c` before opening and
+writing `option.sav`; this import now uses the existing database quota query.
+No game-specific branches or archive modifications are used.
+
+The following map-loading failure was standard-library table `1`, import
+`0x415` (`memmove`). Guest callers shift overlapping byte/16-bit-element
+ranges, so plain `memcpy` is not sufficient. This route now copies in the
+appropriate direction using bounded chunks; the shared helper is tested
+with overlap in both directions across chunk boundaries.

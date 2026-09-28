@@ -21,6 +21,9 @@ use context::LgtWIPICContext;
 use crate::runtime::{SVC_CATEGORY_WIPIC, svc_ids::WIPICSvcId};
 
 const TIME_VALUE_PTR: u32 = 0x7fff1004;
+const INPUT_MODES_PTR: u32 = 0x7fff1020;
+const INPUT_CURRENT_MODE: u32 = 0x7fff1024;
+const INPUT_MODES: [&[u8]; 3] = [b"EN/L", b"EN/S", b"NUM"];
 
 struct WIPICMethodResult {
     result: WIPICResult,
@@ -106,10 +109,10 @@ async fn handle_wipic_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm),
         WIPICSvcId::CreateImage => graphics::create_image.into_body(),
         WIPICSvcId::Unk0 => unk0.into_body(),
         WIPICSvcId::Unk11 => unk11.into_body(),
-        WIPICSvcId::Unk3 => unk3.into_body(),
-        WIPICSvcId::Unk4 => unk4.into_body(),
-        WIPICSvcId::Unk7 => unk7.into_body(),
-        WIPICSvcId::Unk6 => unk6.into_body(),
+        WIPICSvcId::InputModeCount => input_mode_count.into_body(),
+        WIPICSvcId::InputModes => input_modes.into_body(),
+        WIPICSvcId::SetInputMode => set_input_mode.into_body(),
+        WIPICSvcId::GetInputMode => get_input_mode.into_body(),
         WIPICSvcId::TimeNow => time_now.into_body(),
         WIPICSvcId::TimeComponent => time_component.into_body(),
         WIPICSvcId::TimeConvert => time_convert.into_body(),
@@ -125,6 +128,7 @@ async fn handle_wipic_svc(core: &mut ArmCore, (system, jvm): &mut (System, Jvm),
         WIPICSvcId::ListRecord => database::list_record.into_body(),
         WIPICSvcId::UpdateRecord => database::update_record.into_body(),
         WIPICSvcId::SelectRecord => database::select_record.into_body(),
+        WIPICSvcId::GetDatabaseAvailable => database::list_databases.into_body(),
         WIPICSvcId::Unk8 => database::exists_database.into_body(),
         WIPICSvcId::Connect => net::connect.into_body(),
         WIPICSvcId::Close => net::close.into_body(),
@@ -259,16 +263,29 @@ async fn unk2(context: &mut dyn WIPICContext) -> Result<u32> {
     Ok(result)
 }
 
-async fn unk3(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
-    tracing::warn!("stub unk3({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
-
-    Ok(0)
+// LGT imports 300/301 return the input mode count and a char ** table.
+// The table and current selection belong to this guest, and remain valid
+// across callbacks (including repeated queries during name entry).
+async fn input_mode_count(_context: &mut dyn WIPICContext) -> Result<u32> {
+    Ok(INPUT_MODES.len() as u32)
 }
 
-async fn unk4(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
-    tracing::warn!("stub unk4({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
-
-    Ok(0)
+async fn input_modes(context: &mut dyn WIPICContext) -> Result<u32> {
+    let existing: u32 = read_generic(context, INPUT_MODES_PTR)?;
+    if existing != 0 {
+        return Ok(existing);
+    }
+    let table_size = (INPUT_MODES.len() * 4) as u32;
+    let strings_size = INPUT_MODES.iter().map(|mode| mode.len() + 1).sum::<usize>() as u32;
+    let table = context.alloc_raw(table_size + strings_size)?;
+    let mut string = table + table_size;
+    for (index, mode) in INPUT_MODES.iter().enumerate() {
+        write_generic(context, table + index as u32 * 4, string)?;
+        write_null_terminated_string_bytes(context, string, mode)?;
+        string += mode.len() as u32 + 1;
+    }
+    write_generic(context, INPUT_MODES_PTR, table)?;
+    Ok(table)
 }
 
 async fn unk5(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
@@ -279,15 +296,15 @@ async fn unk5(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u3
     Ok(0)
 }
 
-async fn unk6(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
-    tracing::warn!("stub unk6({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
-
-    Ok(0)
+async fn get_input_mode(context: &mut dyn WIPICContext) -> Result<u32> {
+    read_generic(context, INPUT_CURRENT_MODE)
 }
 
-async fn unk7(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u32) -> Result<u32> {
-    tracing::warn!("stub unk7({a0:#x}, {a1:#x}, {a2:#x}, {a3:#x})");
-
+async fn set_input_mode(context: &mut dyn WIPICContext, mode: u32) -> Result<i32> {
+    if mode >= INPUT_MODES.len() as u32 {
+        return Ok(-9); // M_E_INVALID
+    }
+    write_generic(context, INPUT_CURRENT_MODE, mode)?;
     Ok(0)
 }
 
@@ -411,4 +428,50 @@ async fn unk16(_context: &mut dyn WIPICContext, a0: u32, a1: u32, a2: u32, a3: u
     // misc
 
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_utils::{TestPlatform, run_jvm_test_with_system};
+    use wie_core_arm::Allocator;
+    use wie_util::read_null_terminated_string_bytes;
+
+    #[test]
+    fn input_mode_table_and_selection_are_guest_backed() -> Result<()> {
+        run_jvm_test_with_system(Box::new([]), Box::new(TestPlatform::new()), |jvm, system| async move {
+            let mut core = ArmCore::new(false, None).unwrap();
+            Allocator::init(&mut core).unwrap();
+            let mut context = LgtWIPICContext::new(core.clone(), system.clone(), jvm.clone());
+            let count = input_mode_count(&mut context).await.unwrap();
+            let table = input_modes(&mut context).await.unwrap();
+            assert_ne!(table, 0);
+            let mut modes = alloc::vec::Vec::new();
+            for index in 0..count {
+                let string: u32 = read_generic(&core, table + index * 4).unwrap();
+                modes.push(read_null_terminated_string_bytes(&core, string).unwrap());
+            }
+            assert!(modes.iter().any(|mode| mode == b"EN/L"));
+            assert!(modes.iter().any(|mode| mode == b"EN/S"));
+            assert_eq!(get_input_mode(&mut context).await.unwrap(), 0);
+            assert_eq!(set_input_mode(&mut context, 1).await.unwrap(), 0);
+            let mut callback = LgtWIPICContext::new(core.clone(), system.clone(), jvm.clone());
+            assert_eq!(input_modes(&mut callback).await.unwrap(), table);
+            assert_eq!(get_input_mode(&mut callback).await.unwrap(), 1);
+            assert_eq!(set_input_mode(&mut callback, count).await.unwrap(), -9);
+            assert_eq!(get_input_mode(&mut callback).await.unwrap(), 1);
+
+            // A second emulator must not inherit the first emulator's pointers or mode.
+            let mut other_core = ArmCore::new(false, None).unwrap();
+            Allocator::init(&mut other_core).unwrap();
+            let mut other = LgtWIPICContext::new(other_core.clone(), system, jvm);
+            assert_eq!(read_generic::<u32, _>(&other_core, INPUT_MODES_PTR).unwrap(), 0);
+            assert_eq!(get_input_mode(&mut other).await.unwrap(), 0);
+            input_modes(&mut other).await.unwrap();
+            write_generic(&mut core, INPUT_CURRENT_MODE, 2u32).unwrap();
+            assert_eq!(get_input_mode(&mut context).await.unwrap(), 2);
+            assert_eq!(get_input_mode(&mut other).await.unwrap(), 0);
+            Ok(())
+        })
+    }
 }
