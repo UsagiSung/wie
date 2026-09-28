@@ -12,7 +12,6 @@ export const initializeLibrary = async (launchApp: (app: AppMetadata, archive: U
   const store = await AppLibraryStore.open();
   const grid = document.getElementById("library-pages")!;
   const status = document.getElementById("library-status")!;
-  const count = document.getElementById("library-count")!;
   const search = document.getElementById("game-search") as HTMLInputElement;
   const carrier = document.getElementById("carrier-filter") as HTMLSelectElement;
   const sort = document.getElementById("game-sort") as HTMLSelectElement;
@@ -77,7 +76,6 @@ export const initializeLibrary = async (launchApp: (app: AppMetadata, archive: U
       : a.title.localeCompare(b.title, "ko") || a.carrier.localeCompare(b.carrier));
     const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     page = Math.min(page, pages - 1);
-    count.textContent = String(games.length);
     status.textContent = `${filtered.length}개의 게임 · ${page + 1} / ${pages} 페이지`;
     if (!filtered.length) {
       const empty = document.createElement("div");
