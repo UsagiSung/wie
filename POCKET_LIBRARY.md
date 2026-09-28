@@ -18,6 +18,7 @@ UsagiSung의 개인 피처폰 게임 라이브러리 프로젝트입니다. WIE�
 - 기존 WIE의 MIDI/SMAF 음악과 효과음, 게임 저장 기능
 - 별도 브라우저나 Python 서버 없이 실행하는 Tauri/WebView2 Windows 앱
 - APK는 수집 및 중복 검사만 수행하며 실행 목록에서는 제외
+- 최근 플레이 카드의 빨간 ×에서 확인 후 게임 저장 데이터와 최근 기록 초기화
 - 게임 실행 실패 시 라이브러리로 복귀하고 오류 내용 표시
 
 ## 개발 및 빌드
@@ -33,6 +34,8 @@ npm run desktop:build -- --no-bundle
 실행파일은 `target/release/wie-app.exe`입니다. 실행파일 옆에 `library/catalog.json`과 `library/files/`를 두면 수집한 게임이 자동 표시됩니다. 라이브러리가 없어도 앱에서 ZIP/JAR를 추가할 수 있습니다.
 
 게임 추가, 즐겨찾기, 최근 플레이 및 게임 내 저장은 앱의 WebView2 사용자 데이터에 보관됩니다. 게임 종료 전 게임 자체의 저장 기능을 사용하세요. 앱 데이터를 삭제하면 저장 정보가 사라질 수 있습니다.
+
+게임이 저장 API를 호출할 때 기록을 보관합니다. 게임 자체의 자동 저장 또는 수동 저장을 따르며, 종료 순간의 실행 상태를 통째로 저장하는 기능은 없습니다. 최근 플레이 카드 우측 하단의 빨간 ×를 누르면 게임명과 ‘진짜 삭제할까요?’ 확인창이 표시됩니다. 취소 또는 Esc는 데이터를 유지하며, 빨간 ‘삭제’를 누른 경우에만 저장 기록·파일 데이터와 최근 플레이 기록을 삭제합니다. 게임 원본 및 즐겨찾기는 유지합니다. 기존 WIE 저장공간을 공유하는 다른 버전에는 초기화가 함께 적용될 수 있습니다.
 
 ## 수집 및 라이브러리 생성
 
@@ -54,6 +57,7 @@ cargo fmt --all --check
 cargo clippy --workspace -- -D warnings
 cargo test -p wie-app -p wie-backend -p wie-midp
 npx tsc --project wie-web/tsconfig.json --noEmit
+node --experimental-strip-types --test wie-web/tests/game_data.test.mjs
 ```
 
 카탈로그 등록은 파일 구조를 인식했다는 뜻이며 모든 게임의 완전 호환을 보증하지 않습니다. KTF 화장빨인생과 피자타이쿤2를 기반으로 디버그했습니다. 게임별 미구현 API와 데이터 차이에 따른 추가 호환성 작업이 필요할 수 있습니다.

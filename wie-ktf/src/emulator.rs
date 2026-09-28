@@ -110,6 +110,11 @@ impl KtfEmulator {
         files.get("big.icon").cloned()
     }
 
+    pub fn archive_aid(files: &BTreeMap<String, Vec<u8>>) -> Option<String> {
+        let aid = KtfAdf::parse(files.get("__adf__")?).aid;
+        (!aid.is_empty()).then_some(aid)
+    }
+
     pub fn loadable_jar(jar: &[u8]) -> bool {
         find_client_bin(jar).is_ok()
     }

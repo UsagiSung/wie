@@ -3,6 +3,7 @@ import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CircleHelp, FolderPlus, Hear
 import { AppLibraryStore, AppMetadata } from "./app_library_store";
 import { desktopArchive, desktopCatalog } from "./desktop";
 import { SettingsController } from "./settings";
+import { GameStorageIdentity, resetGameData } from "./game_data";
 
 type Game = AppMetadata & { nativeId?: string; iconUrl?: string; carrier: string };
 type Preferences = { favorites: string[]; played: Record<string, number> };
@@ -21,6 +22,13 @@ export const initializeLibrary = async (launchApp: (app: AppMetadata, archive: U
   const importStatus = document.getElementById("import-status")!;
   const choose = document.getElementById("choose-archive") as HTMLButtonElement;
   const errorDialog = document.getElementById("error-dialog") as HTMLDialogElement;
+  const resetDialog = document.getElementById("reset-game-dialog") as HTMLDialogElement;
+  const resetConfirm = document.getElementById("reset-game-confirm") as HTMLButtonElement;
+  const resetCancel = document.getElementById("reset-game-cancel") as HTMLButtonElement;
+  const resetStatus = document.getElementById("reset-game-status")!;
+  let resetTarget: { game: Game; identity: GameStorageIdentity } | undefined;
+  let resetting = false;
+  let resetRequest = 0;
   let preferences: Preferences = { favorites: [], played: {} };
   try {
     const saved = JSON.parse(localStorage.getItem("pocket_preferences") ?? "null") as Preferences | null;
@@ -61,6 +69,50 @@ export const initializeLibrary = async (launchApp: (app: AppMetadata, archive: U
       render();
     }
   };
+  const requestReset = async (game: Game) => {
+    const request = ++resetRequest;
+    resetTarget = undefined;
+    resetConfirm.disabled = true;
+    resetStatus.textContent = "저장공간을 확인하고 있습니다…";
+    document.getElementById("reset-game-name")!.textContent = game.title;
+    resetDialog.showModal();
+    try {
+      const archive = game.nativeId ? await desktopArchive(game.nativeId) : await store.getArchive(game.id);
+      if (!archive) throw new Error("게임 원본을 읽을 수 없어 저장공간을 확인하지 못했습니다.");
+      const metadata = extractAppMetadata(game.filename, archive);
+      try {
+        if (!resetDialog.open || request !== resetRequest) return;
+        resetTarget = { game, identity: { pid: metadata.id, aid: metadata.aid } };
+        resetConfirm.disabled = false;
+        resetStatus.textContent = "";
+      } finally { metadata.free(); }
+    } catch (error) { if (request === resetRequest) resetStatus.textContent = String(error); }
+  };
+  resetCancel.addEventListener("click", () => resetDialog.close());
+  resetDialog.addEventListener("cancel", event => { if (resetting) event.preventDefault(); });
+  resetDialog.addEventListener("close", () => { resetTarget = undefined; resetRequest++; });
+  resetConfirm.addEventListener("click", () => {
+    if (!resetTarget || resetting) return;
+    const target = resetTarget;
+    resetting = true;
+    resetConfirm.disabled = resetCancel.disabled = true;
+    resetStatus.textContent = "저장 데이터를 삭제하고 있습니다…";
+    void (async () => {
+      try {
+        await resetGameData(target.identity);
+        delete preferences.played[target.game.id];
+        save();
+        resetDialog.close();
+        render();
+        status.textContent = `${target.game.title}의 저장 데이터와 최근 플레이 기록을 삭제했습니다.`;
+      } catch (error) {
+        resetStatus.textContent = `삭제를 완료하지 못했습니다. 일부 데이터가 삭제되었을 수 있습니다. 다시 시도해 주세요.\n${String(error)}`;
+      } finally {
+        resetting = false;
+        resetConfirm.disabled = resetCancel.disabled = false;
+      }
+    })();
+  });
   const render = () => {
     for (const url of urls) URL.revokeObjectURL(url);
     urls.clear();
@@ -124,6 +176,15 @@ export const initializeLibrary = async (launchApp: (app: AppMetadata, archive: U
         save(); render();
       });
       card.append(button, favorite);
+      if (tab === "recent") {
+        const reset = document.createElement("button");
+        reset.className = "reset-game-button";
+        reset.textContent = "×";
+        reset.title = "게임 데이터 초기화하기";
+        reset.setAttribute("aria-label", `${game.title} 게임 데이터 초기화하기`);
+        reset.addEventListener("click", () => { void requestReset(game); });
+        card.append(reset);
+      }
       grid.append(card);
     }
     for (const [label, delta] of [["← 이전", -1], ["다음 →", 1]] as const) {

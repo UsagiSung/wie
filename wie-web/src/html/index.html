@@ -159,6 +159,19 @@
         </footer>
       </form>
     </dialog>
+    <dialog id="reset-game-dialog" class="app-dialog" aria-labelledby="reset-game-title" aria-describedby="reset-game-description">
+      <div class="reset-dialog-content">
+        <header class="dialog-header"><h2 id="reset-game-title">진짜 삭제할까요?</h2></header>
+        <strong id="reset-game-name"></strong>
+        <p id="reset-game-description">이 게임의 저장 데이터와 최근 플레이 기록을 삭제합니다. 삭제한 데이터는 되돌릴 수 없습니다.</p>
+        <p class="reset-game-note">게임 원본과 즐겨찾기는 유지됩니다. 동일한 저장공간을 쓰는 다른 버전의 저장 데이터에도 적용됩니다.</p>
+        <p id="reset-game-status" class="dialog-status" role="status" aria-live="polite"></p>
+        <footer class="dialog-actions">
+          <button id="reset-game-cancel" class="secondary-command" type="button" autofocus>취소</button>
+          <button id="reset-game-confirm" class="danger-command" type="button">삭제</button>
+        </footer>
+      </div>
+    </dialog>
     <dialog id="error-dialog" class="app-dialog">
       <form method="dialog"><header class="dialog-header"><h2 id="error-title">게임 실행 오류</h2></header>
       <p>이 게임은 추가적인 호환성 작업이 필요하거나 실행 파일이 불완전할 수 있습니다. 다른 게임을 선택해 주세요.</p>

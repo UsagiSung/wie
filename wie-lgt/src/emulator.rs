@@ -95,6 +95,11 @@ impl LgtEmulator {
         files.get("big.png").cloned()
     }
 
+    pub fn archive_aid(files: &BTreeMap<String, Vec<u8>>) -> Option<String> {
+        let aid = LgtAppInfo::parse(files.get("app_info")?).aid;
+        (!aid.is_empty()).then_some(aid)
+    }
+
     pub fn loadable_jar(jar: &[u8]) -> bool {
         let Ok(files) = extract_zip(jar) else {
             return false;

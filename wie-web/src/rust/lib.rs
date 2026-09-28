@@ -171,12 +171,18 @@ impl Drop for WieWeb {
 #[wasm_bindgen]
 pub struct ImportedAppMetadata {
     id: String,
+    aid: String,
     title: String,
     icon: Vec<u8>,
 }
 
 #[wasm_bindgen]
 impl ImportedAppMetadata {
+    #[wasm_bindgen(getter)]
+    pub fn aid(&self) -> String {
+        self.aid.clone()
+    }
+
     #[wasm_bindgen(getter)]
     pub fn id(&self) -> String {
         self.id.clone()
@@ -201,26 +207,32 @@ pub fn extract_app_metadata(filename: &str, buf: &[u8]) -> Result<ImportedAppMet
         match platform {
             ArchivePlatform::Ktf => KtfEmulator::archive_id(&files)
                 .zip(KtfEmulator::archive_title(&files))
-                .map(|(id, title)| (id, title, KtfEmulator::archive_icon(&files))),
+                .zip(KtfEmulator::archive_aid(&files))
+                .map(|((id, title), aid)| (id, aid, title, KtfEmulator::archive_icon(&files))),
             ArchivePlatform::Lgt => LgtEmulator::archive_id(&files)
                 .zip(LgtEmulator::archive_title(&files))
-                .map(|(id, title)| (id, title, LgtEmulator::archive_icon(&files))),
+                .zip(LgtEmulator::archive_aid(&files))
+                .map(|((id, title), aid)| (id, aid, title, LgtEmulator::archive_icon(&files))),
             ArchivePlatform::Skt => SktEmulator::archive_id(&files)
                 .zip(SktEmulator::archive_title(&files))
-                .map(|(id, title)| (id, title, SktEmulator::archive_icon(&files))),
+                .map(|(id, title)| (id.clone(), id, title, SktEmulator::archive_icon(&files))),
         }
     } else if lowercase_filename.ends_with(".jar") {
         let filename = filename.rsplit('/').next().unwrap();
         J2MEEmulator::jar_metadata(buf)
             .map_err(|error| JsError::new(&error.to_string()))?
-            .map(|(title, icon)| (jar_app_id(filename, buf).to_owned(), title, icon))
+            .map(|(title, icon)| {
+                let id = jar_app_id(filename, buf).to_owned();
+                (id.clone(), id, title, icon)
+            })
     } else {
         return Err(JsError::new("Unknown file format"));
     };
-    let (id, title, icon) = metadata.ok_or_else(|| JsError::new("App metadata does not contain an ID, title or entry point"))?;
+    let (id, aid, title, icon) = metadata.ok_or_else(|| JsError::new("App metadata does not contain an ID, title or entry point"))?;
 
     Ok(ImportedAppMetadata {
         id,
+        aid,
         title,
         icon: icon.unwrap_or_default(),
     })
