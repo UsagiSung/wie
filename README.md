@@ -1,3 +1,9 @@
+# Pocket Library — 개인 Windows 포크
+
+UsagiSung의 피처폰 게임 라이브러리입니다. 설치·빌드·수집·중복 검사와 원본 기여 표기는 [Pocket Library 안내](POCKET_LIBRARY.md)를 참고하세요. 이 브랜치는 개인 프로젝트이며 원본 저장소에 변경을 제출하지 않습니다.
+
+---
+
 # WIE
 
 [Homepage](https://wie-site.dlunch.net) | [Try in browser](https://wie.dlunch.net)

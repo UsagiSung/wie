@@ -81,6 +81,11 @@ export const runApp = (app: AppMetadata, archive: Uint8Array, fontData: Uint8Arr
         return;
       }
 
+      if (event.code === "Escape") {
+        event.preventDefault();
+        exit();
+        return;
+      }
       const key = KEY_MAP[event.code];
       if (key) {
         event.preventDefault();
@@ -106,6 +111,10 @@ export const runApp = (app: AppMetadata, archive: Uint8Array, fontData: Uint8Arr
     },
     { signal: abortController.signal },
   );
+
+  window.addEventListener("blur", () => {
+    for (const key of new Set(Object.values(KEY_MAP))) wieWeb.key_up(key);
+  }, { signal: abortController.signal });
 
   const update = () => {
     if (!running) {
